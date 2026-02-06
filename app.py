@@ -1,74 +1,72 @@
 import streamlit as st
 import pandas as pd
-import io
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="Tyco VMI Platform", page_icon="🚛", layout="wide")
+# Page Configuration
+st.set_page_config(page_title="Tyco Logistics Platform", page_icon="🚛", layout="wide")
 
-# --- CUSTOM CSS ---
+# Custom Styling
 st.markdown("""
-<style>
-    .main-header { font-size: 30px; font-weight: bold; color: #00ADB5; }
-    .card { background-color: #262730; padding: 20px; border-radius: 10px; border: 1px solid #4F4F4F; margin-bottom: 20px; }
-</style>
-""", unsafe_allow_html=True)
+    <style>
+    .main-title { text-align: center; color: #00ADB5; font-size: 35px; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- HELPER FUNCTIONS ---
-@st.cache_data
-def load_data(file):
-    try:
-        df = pd.read_excel(file)
-        # Fix format
-        cols_to_str = ['SO No', 'PO Number', 'Material Number', 'ShipmntNbr', 'Tracking No']
-        for col in cols_to_str:
-            if col in df.columns:
-                df[col] = df[col].astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
-        
-        if 'PGI Date' in df.columns:
-            df['PGI Date'] = pd.to_datetime(df['PGI Date'], errors='coerce').dt.strftime('%d/%m/%Y')
-        
-        # Auto Status
-        if 'Status' not in df.columns:
-            df['Status'] = df['PGI Date'].apply(lambda x: 'Shipped 🚀' if pd.notnull(x) and x != '' else 'Pending ⏳')
+st.markdown('<p class="main-title">Tyco VMI & Logistics Tracker</p>', unsafe_allow_html=True)
 
-        return df.fillna("-")
-    except Exception as e:
-        st.error(f"Error: {e}")
-        return None
-
-# --- SIDEBAR ---
+# Sidebar for Upload
 with st.sidebar:
-    st.title("🏭 Tyco VMI")
-    uploaded_file = st.file_uploader("📂 Upload Excel", type=["xlsx"])
-    st.info("System Ready")
-
-# --- MAIN PAGE ---
-st.markdown('<p class="main-header">🚛 Logistics Tracking Platform</p>', unsafe_allow_html=True)
+    st.header("Data Sources")
+    uploaded_file = st.file_uploader("Upload Tyco Excel Report", type=['xlsx'])
+    st.divider()
+    st.info("System Status: Ready")
 
 if uploaded_file:
-    df = load_data(uploaded_file)
-    if df is not None:
-        tab1, tab2 = st.tabs(["📊 Dashboard", "🔎 Search"])
+    # Load Data
+    try:
+        df = pd.read_excel(uploaded_file)
         
-        with tab1:
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Total Shipments", len(df))
-            c2.metric("Shipped", len(df[df['Status'].str.contains('Shipped')]))
-            total_qty = pd.to_numeric(df['Dely Qty'], errors='coerce').sum() if 'Dely Qty' in df.columns else 0
-            c3.metric("Total Qty", f"{total_qty:,.0f}")
-            st.dataframe(df, use_container_width=True)
+        # Clean column names (remove leading/trailing spaces)
+        df.columns = df.columns.str.strip()
 
-        with tab2:
-            c1, c2, c3 = st.columns(3)
-            f_ship = c1.text_input("Shipment Num")
-            f_po = c2.text_input("PO Num")
-            f_mat = c3.text_input("Material Num")
+        # Search Section
+        st.markdown("### 🔍 Search Portal")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            tracking_search = st.text_input("Search by Tracking No:")
+        
+        with col2:
+            material_search = st.text_input("Search by Material / PO:")
+
+        # Filtering Logic
+        filtered_df = df.copy()
+        
+        if tracking_search:
+            # Search in all columns to ensure we catch the Tracking No
+            mask = filtered_df.astype(str).apply(lambda x: x.str.contains(tracking_search, case=False)).any(axis=1)
+            filtered_df = filtered_df[mask]
             
-            df_f = df.copy()
-            if f_ship: df_f = df_f[df_f['ShipmntNbr'].str.contains(f_ship, case=False)]
-            if f_po: df_f = df_f[df_f['PO Number'].str.contains(f_po, case=False)]
-            if f_mat: df_f = df_f[df_f['Material Number'].str.contains(f_mat, case=False)]
-            
-            st.dataframe(df_f, use_container_width=True)
+        if material_search:
+            mask = filtered_df.astype(str).apply(lambda x: x.str.contains(material_search, case=False)).any(axis=1)
+            filtered_df = filtered_df[mask]
+
+        # Display Results
+        st.markdown("---")
+        st.subheader(f"Results: {len(filtered_df)} records found")
+        st.dataframe(filtered_df, use_container_width=True)
+
+        # Download Feature
+        if not filtered_df.empty:
+            csv = filtered_df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 Download Results as CSV",
+                data=csv,
+                file_name='Tyco_Search_Report.csv',
+                mime='text/csv',
+            )
+
+    except Exception as e:
+        st.error(f"Error processing file: {e}")
+
 else:
-    st.info("👋 Upload Data to start.")
+    st.warning("Please upload an Excel file to display the tracking dashboard.")
