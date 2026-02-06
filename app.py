@@ -1,77 +1,84 @@
 import streamlit as st
 import pandas as pd
+import os
+import io
 
-# Page Configuration
-st.set_page_config(page_title="Tyco Logistics Search", page_icon="🚛", layout="wide")
+# App Configuration
+st.set_page_config(page_title="Tyco Logistics Search", layout="wide")
 
-st.markdown("""
-    <style>
-    .main-title { text-align: center; color: #00ADB5; font-size: 32px; font-weight: bold; margin-bottom: 20px; }
-    </style>
-    """, unsafe_allow_html=True)
+MASTER_DB = "Tyco_Master_Database.csv"
 
-st.markdown('<p class="main-title">Tyco Advanced Logistics Search</p>', unsafe_allow_html=True)
+def load_master_data():
+    if os.path.exists(MASTER_DB):
+        return pd.read_csv(MASTER_DB)
+    return pd.DataFrame()
 
-# Sidebar
+# 1. Sidebar for File Upload & Processing
 with st.sidebar:
-    st.header("Upload Center")
-    uploaded_file = st.file_uploader("Upload Excel File", type=['xlsx'])
+    st.header("Data Management")
+    uploaded_file = st.file_uploader("Upload Daily Sheet", type=['xlsx', 'xls'])
+    
+    if uploaded_file:
+        if st.button("Save to Master Database"):
+            new_data = pd.read_excel(uploaded_file, engine='openpyxl')
+            master_df = load_master_data()
+            
+            combined_df = pd.concat([master_df, new_data], ignore_index=True)
+            
+            # Remove duplicates based on Delivery Number
+            if 'Dely No' in combined_df.columns:
+                combined_df.drop_duplicates(subset=['Dely No'], keep='last', inplace=True)
+            
+            combined_df.to_csv(MASTER_DB, index=False)
+            st.success("Database Updated Successfully!")
+
+# 2. Main Interface - Search Filters
+st.title("Tyco Advanced Logistics Search")
+st.subheader("🔍 Search Filters")
+
+df = load_master_data()
+
+if not df.empty:
+    # Creating search columns
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        dely_in = st.text_input("Dely No")
+    with col2:
+        mat_in = st.text_input("Cust Material Nbr")
+    with col3:
+        track_in = st.text_input("Tracking No")
+    with col4:
+        ship_in = st.text_input("ShipmntNbr")
+
+    # Filtering Logic
+    filtered_df = df.copy()
+    
+    if dely_in:
+        filtered_df = filtered_df[filtered_df['Dely No'].astype(str).str.contains(dely_in, case=False, na=False)]
+    if mat_in:
+        filtered_df = filtered_df[filtered_df['Cust Material Nbr'].astype(str).str.contains(mat_in, case=False, na=False)]
+    if track_in:
+        filtered_df = filtered_df[filtered_df['Tracking No'].astype(str).str.contains(track_in, case=False, na=False)]
+    if ship_in:
+        filtered_df = filtered_df[filtered_df['ShipmntNbr'].astype(str).str.contains(ship_in, case=False, na=False)]
+
+    # 3. Display Results
     st.divider()
-    st.info("Logistics Management System v3.0")
+    st.write(f"### Records Found: {len(filtered_df)}")
+    st.dataframe(filtered_df, use_container_width=True)
 
-if uploaded_file:
-    try:
-        df = pd.read_excel(uploaded_file)
-        # Standardize column names
-        df.columns = df.columns.str.strip()
-
-        # --- Search Boxes Section ---
-        st.markdown("### 🔍 Search Filters")
+    # 4. Download Filtered Data to Excel
+    if not filtered_df.empty:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            filtered_df.to_excel(writer, index=False, sheet_name='Search_Results')
         
-        # Creating 4 columns for the 4 search boxes
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            dely_search = st.text_input("Dely No")
-        with col2:
-            cust_mat_search = st.text_input("Cust Material Nbr")
-        with col3:
-            track_search = st.text_input("Tracking No")
-        with col4:
-            ship_search = st.text_input("ShipmntNbr")
-
-        # Filtering Logic
-        filtered_df = df.copy()
-
-        # Apply filters only if input is provided
-        if dely_search:
-            filtered_df = filtered_df[filtered_df.astype(str).apply(lambda x: x.str.contains(dely_search, case=False)).any(axis=1) if 'Dely No' not in df.columns else filtered_df['Dely No'].astype(str).str.contains(dely_search, case=False)]
-        
-        if cust_mat_search:
-            filtered_df = filtered_df[filtered_df.astype(str).apply(lambda x: x.str.contains(cust_mat_search, case=False)).any(axis=1) if 'Cust Material Nbr' not in df.columns else filtered_df['Cust Material Nbr'].astype(str).str.contains(cust_mat_search, case=False)]
-            
-        if track_search:
-            filtered_df = filtered_df[filtered_df.astype(str).apply(lambda x: x.str.contains(track_search, case=False)).any(axis=1) if 'Tracking No' not in df.columns else filtered_df['Tracking No'].astype(str).str.contains(track_search, case=False)]
-            
-        if ship_search:
-            filtered_df = filtered_df[filtered_df.astype(str).apply(lambda x: x.str.contains(ship_search, case=False)).any(axis=1) if 'ShipmntNbr' not in df.columns else filtered_df['ShipmntNbr'].astype(str).str.contains(ship_search, case=False)]
-
-        # Results Area
-        st.markdown("---")
-        st.subheader(f"Records Found: {len(filtered_df)}")
-        st.dataframe(filtered_df, use_container_width=True)
-
-        # Download Button
-        if not filtered_df.empty:
-            csv = filtered_df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(
-                label="📥 Export Search Results",
-                data=csv,
-                file_name='Filtered_Tyco_Report.csv',
-                mime='text/csv',
-            )
-
-    except Exception as e:
-        st.error(f"Error: {e}")
+        st.download_button(
+            label="📥 Download Results as Excel",
+            data=buffer.getvalue(),
+            file_name="Tyco_Filtered_Report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 else:
-    st.warning("Please upload the Tyco Logistics Excel file to enable search filters.")
+    st.info("The database is currently empty. Please upload a file from the sidebar to start.")
