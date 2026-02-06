@@ -2,71 +2,76 @@ import streamlit as st
 import pandas as pd
 
 # Page Configuration
-st.set_page_config(page_title="Tyco Logistics Platform", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="Tyco Logistics Search", page_icon="🚛", layout="wide")
 
-# Custom Styling
 st.markdown("""
     <style>
-    .main-title { text-align: center; color: #00ADB5; font-size: 35px; font-weight: bold; }
+    .main-title { text-align: center; color: #00ADB5; font-size: 32px; font-weight: bold; margin-bottom: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
-st.markdown('<p class="main-title">Tyco VMI & Logistics Tracker</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-title">Tyco Advanced Logistics Search</p>', unsafe_allow_html=True)
 
-# Sidebar for Upload
+# Sidebar
 with st.sidebar:
-    st.header("Data Sources")
-    uploaded_file = st.file_uploader("Upload Tyco Excel Report", type=['xlsx'])
+    st.header("Upload Center")
+    uploaded_file = st.file_uploader("Upload Excel File", type=['xlsx'])
     st.divider()
-    st.info("System Status: Ready")
+    st.info("Logistics Management System v3.0")
 
 if uploaded_file:
-    # Load Data
     try:
         df = pd.read_excel(uploaded_file)
-        
-        # Clean column names (remove leading/trailing spaces)
+        # Standardize column names
         df.columns = df.columns.str.strip()
 
-        # Search Section
-        st.markdown("### 🔍 Search Portal")
-        col1, col2 = st.columns(2)
+        # --- Search Boxes Section ---
+        st.markdown("### 🔍 Search Filters")
+        
+        # Creating 4 columns for the 4 search boxes
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            tracking_search = st.text_input("Search by Tracking No:")
-        
+            dely_search = st.text_input("Dely No")
         with col2:
-            material_search = st.text_input("Search by Material / PO:")
+            cust_mat_search = st.text_input("Cust Material Nbr")
+        with col3:
+            track_search = st.text_input("Tracking No")
+        with col4:
+            ship_search = st.text_input("ShipmntNbr")
 
         # Filtering Logic
         filtered_df = df.copy()
-        
-        if tracking_search:
-            # Search in all columns to ensure we catch the Tracking No
-            mask = filtered_df.astype(str).apply(lambda x: x.str.contains(tracking_search, case=False)).any(axis=1)
-            filtered_df = filtered_df[mask]
-            
-        if material_search:
-            mask = filtered_df.astype(str).apply(lambda x: x.str.contains(material_search, case=False)).any(axis=1)
-            filtered_df = filtered_df[mask]
 
-        # Display Results
+        # Apply filters only if input is provided
+        if dely_search:
+            filtered_df = filtered_df[filtered_df.astype(str).apply(lambda x: x.str.contains(dely_search, case=False)).any(axis=1) if 'Dely No' not in df.columns else filtered_df['Dely No'].astype(str).str.contains(dely_search, case=False)]
+        
+        if cust_mat_search:
+            filtered_df = filtered_df[filtered_df.astype(str).apply(lambda x: x.str.contains(cust_mat_search, case=False)).any(axis=1) if 'Cust Material Nbr' not in df.columns else filtered_df['Cust Material Nbr'].astype(str).str.contains(cust_mat_search, case=False)]
+            
+        if track_search:
+            filtered_df = filtered_df[filtered_df.astype(str).apply(lambda x: x.str.contains(track_search, case=False)).any(axis=1) if 'Tracking No' not in df.columns else filtered_df['Tracking No'].astype(str).str.contains(track_search, case=False)]
+            
+        if ship_search:
+            filtered_df = filtered_df[filtered_df.astype(str).apply(lambda x: x.str.contains(ship_search, case=False)).any(axis=1) if 'ShipmntNbr' not in df.columns else filtered_df['ShipmntNbr'].astype(str).str.contains(ship_search, case=False)]
+
+        # Results Area
         st.markdown("---")
-        st.subheader(f"Results: {len(filtered_df)} records found")
+        st.subheader(f"Records Found: {len(filtered_df)}")
         st.dataframe(filtered_df, use_container_width=True)
 
-        # Download Feature
+        # Download Button
         if not filtered_df.empty:
             csv = filtered_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
-                label="📥 Download Results as CSV",
+                label="📥 Export Search Results",
                 data=csv,
-                file_name='Tyco_Search_Report.csv',
+                file_name='Filtered_Tyco_Report.csv',
                 mime='text/csv',
             )
 
     except Exception as e:
-        st.error(f"Error processing file: {e}")
-
+        st.error(f"Error: {e}")
 else:
-    st.warning("Please upload an Excel file to display the tracking dashboard.")
+    st.warning("Please upload the Tyco Logistics Excel file to enable search filters.")
