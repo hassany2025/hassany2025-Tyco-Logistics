@@ -4,138 +4,129 @@ import os
 import io
 
 # App Configuration
-st.set_page_config(page_title="Tyco Logistics Search", layout="wide")
+st.set_page_config(page_title="Tyco Logistics System", layout="wide")
 
+# Using semicolon separator to match your Excel system settings
 MASTER_DB = "Tyco_Master_Database.csv"
+SEP = ";" 
 
 def load_master_data():
-    """Loads the raw master database."""
+    """Reads the master database and handles PGI date formatting."""
     if os.path.exists(MASTER_DB):
-        df = pd.read_csv(MASTER_DB)
+        df = pd.read_csv(MASTER_DB, sep=SEP)
         if 'PGI Date' in df.columns:
             df['PGI Date'] = pd.to_datetime(df['PGI Date'], errors='coerce')
         return df
     return pd.DataFrame()
 
-# 1. Sidebar - Data Ingestion (Storage Logic)
+# 1. Sidebar - Data Management
 with st.sidebar:
-    st.header("Data Management")
-    uploaded_file = st.file_uploader("Upload Daily Sheet", type=['xlsx', 'xls'])
+    st.header("📦 Data Management")
     
-    if uploaded_file:
-        if st.button("Save to Master Database"):
-            new_data = pd.read_excel(uploaded_file, engine='openpyxl')
-            raw_master = load_master_data()
+    # Live stats from the database
+    master_df_sidebar = load_master_data()
+    if not master_df_sidebar.empty:
+        st.metric("Total Records in DB", len(master_df_sidebar))
+        
+        # --- FULL BACKUP SECTION ---
+        st.subheader("Full Database Export")
+        export_all_df = master_df_sidebar.copy()
+        if 'PGI Date' in export_all_df.columns:
+            export_all_df['PGI Date'] = export_all_df['PGI Date'].dt.strftime('%d/%m/%Y')
             
-            # Pure Raw Concatenation
-            combined_raw = pd.concat([raw_master, new_data], ignore_index=True)
-            
-            # Remove only 100% identical rows (Safe Deduplication)
-            combined_raw.drop_duplicates(inplace=True)
-            
-            combined_raw.to_csv(MASTER_DB, index=False)
-            st.success("Raw Data Stored Safely!")
+        buffer_all = io.BytesIO()
+        with pd.ExcelWriter(buffer_all, engine='xlsxwriter') as writer:
+            export_all_df.to_excel(writer, index=False, sheet_name='Full_Master_History')
+        
+        st.download_button(
+            label="📥 Download Full Backup (Excel)",
+            data=buffer_all.getvalue(),
+            file_name=f"Tyco_Full_History_{pd.Timestamp.now().strftime('%d-%m-%Y')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     st.divider()
-    if st.checkbox("Advanced Options"):
-        if st.button("⚠️ Reset Database"):
+    
+    # Uploading new daily sheets
+    uploaded_file = st.file_uploader("Upload New Daily Sheet", type=['xlsx', 'xls'])
+    if uploaded_file:
+        if st.button("Process & Save to Master"):
+            new_data = pd.read_excel(uploaded_file, engine='openpyxl')
+            new_data.columns = new_data.columns.str.strip() # Clean column names
+            
+            master_df = load_master_data()
+            combined_df = pd.concat([master_df, new_data], ignore_index=True)
+            
+            # Smart deduplication: Keep the latest update for each Delivery
+            if 'Dely No' in combined_df.columns:
+                combined_df.drop_duplicates(subset=['ShipmntNbr', 'Dely No', 'Cust Material Nbr'], keep='last', inplace=True)
+            else:
+                combined_df.drop_duplicates(inplace=True)
+            
+            combined_df.to_csv(MASTER_DB, index=False, sep=SEP, encoding='utf-8-sig')
+            st.success("Database Updated Successfully!")
+            st.rerun()
+
+    if st.checkbox("Show Advanced Tools"):
+        if st.button("⚠️ Wipe Database"):
             if os.path.exists(MASTER_DB):
                 os.remove(MASTER_DB)
-                st.warning("Database cleared.")
+                st.warning("All records deleted.")
                 st.rerun()
 
-# 2. Main Interface - The Search Engine
-st.title("Tyco Advanced Logistics Search")
-st.subheader("🔍 Shipment Search Engine")
-
+# 2. Main Interface - Search & Reporting
+st.title("Tyco Logistics Search Engine 🚀")
 raw_df = load_master_data()
 
 if not raw_df.empty:
-    # Search Inputs
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        ship_in = st.text_input("Shipment No")
-    with col2:
-        track_in = st.text_input("Tracking No")
-    with col3:
-        mat_in = st.text_input("Material Nbr")
-    with col4:
-        dely_in = st.text_input("Delivery No")
+    # Search Filters
+    st.subheader("🔍 Shipment Tracking")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: ship_in = st.text_input("Shipment No")
+    with c2: track_in = st.text_input("Tracking No")
+    with c3: mat_in = st.text_input("Material Nbr")
+    with c4: dely_in = st.text_input("Delivery No")
 
-    # Filtering the Raw Data first
-    working_df = raw_df.copy()
-    if ship_in:
-        working_df = working_df[working_df['ShipmntNbr'].astype(str).str.contains(ship_in, na=False)]
-    if track_in:
-        working_df = working_df[working_df['Tracking No'].astype(str).str.contains(track_in, na=False)]
-    if mat_in:
-        working_df = working_df[working_df['Cust Material Nbr'].astype(str).str.contains(mat_in, na=False)]
-    if dely_in:
-        working_df = working_df[working_df['Dely No'].astype(str).str.contains(dely_in, na=False)]
+    # Filter Logic
+    filtered_df = raw_df.copy()
+    if ship_in: filtered_df = filtered_df[filtered_df['ShipmntNbr'].astype(str).str.contains(ship_in, na=False)]
+    if track_in: filtered_df = filtered_df[filtered_df['Tracking No'].astype(str).str.contains(track_in, na=False)]
+    if mat_in: filtered_df = filtered_df[filtered_df['Cust Material Nbr'].astype(str).str.contains(mat_in, na=False)]
+    if dely_in: filtered_df = filtered_df[filtered_df['Dely No'].astype(str).str.contains(dely_in, na=False)]
 
-    # --- THE ACCOUNTING RULES (Observation #1 & #2) ---
+    # 3. Summarization Rule (The Logic)
+    group_cols = ['ShipmntNbr', 'Tracking No', 'Cust Material Nbr', 'Dely No']
+    available_cols = [c for c in group_cols if c in filtered_df.columns]
     
-    # A. Ensure Numeric & Filter Zeros BEFORE GroupBy (Cleaner Logic)
-    working_df['Dely Qty'] = pd.to_numeric(working_df['Dely Qty'], errors='coerce').fillna(0)
-    working_df = working_df[working_df['Dely Qty'] > 0] # Filter first!
-
-    # B. Define Grouping Pillars (Pillar-based security)
-    group_pillars = ['ShipmntNbr', 'Tracking No', 'Cust Material Nbr', 'Dely No']
-    
-    if not working_df.empty:
-        # C. Generate the Summary (Accounting Logic)
-        summary_df = working_df.groupby(group_pillars, as_index=False).agg({
-            'Dely Qty': 'sum',           # Summing is now 100% safe
+    if not filtered_df.empty and len(available_cols) == len(group_cols):
+        filtered_df['Dely Qty'] = pd.to_numeric(filtered_df['Dely Qty'], errors='coerce').fillna(0)
+        
+        summary_df = filtered_df.groupby(group_cols, as_index=False).agg({
+            'Dely Qty': 'sum',
             'Shipto City': 'first',
             'PGI Date': 'max'
         })
-    else:
-        summary_df = working_df
-
-    # 3. Display Results
-    st.divider()
-    st.write(f"### Records Found: {len(summary_df)}")
-    
-    # Presentation View (Formatting for web only)
-    view_df = summary_df.copy()
-    if 'PGI Date' in view_df.columns:
-        view_df['PGI Date'] = view_df['PGI Date'].dt.strftime('%d/%m/%Y')
-
-    st.dataframe(view_df, use_container_width=True)
-
-    # 4. Export Logic (Matching Summary View)
-    if not summary_df.empty:
-        rename_map = {
-            'ShipmntNbr': 'Shipment No', 'Shipto City': 'Ship to City',
-            'Tracking No': 'Tracking No', 'Cust Material Nbr': 'Cust Material N',
-            'Dely Qty': 'Dely Qt', 'Dely No': 'Dely No', 'PGI Date': 'PGI Date'
-        }
-        export_df = summary_df.rename(columns=rename_map)
+        summary_df = summary_df[summary_df['Dely Qty'] > 0]
         
-        final_cols = ['Shipment No', 'Ship to City', 'Tracking No', 'Cust Material N', 'Dely Qt', 'Dely No', 'PGI Date']
-        export_df = export_df[[c for c in final_cols if c in export_df.columns]]
+        st.info(f"Showing {len(summary_df)} unique records based on your search.")
+        
+        # Date Display Formatting
+        display_df = summary_df.copy()
+        if 'PGI Date' in display_df.columns:
+            display_df['PGI Date'] = display_df['PGI Date'].dt.strftime('%d/%m/%Y')
+        
+        st.dataframe(display_df, use_container_width=True)
 
+        # 4. Download Summarized Report
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            export_df.to_excel(writer, index=False, sheet_name='Tyco_Report')
-            workbook = writer.book
-            worksheet = writer.sheets['Tyco_Report']
+            summary_df.to_excel(writer, index=False, sheet_name='Search_Results')
             
-            # Accounting style formatting
-            header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1})
-            for col_num, value in enumerate(export_df.columns.values):
-                worksheet.write(0, col_num, value, header_fmt)
-            
-            # Adjust column width
-            for i, col in enumerate(export_df.columns):
-                column_len = max(export_df[col].astype(str).str.len().max(), len(col)) + 2
-                worksheet.set_column(i, i, column_len)
-
         st.download_button(
-            label="📥 Download Summarized Excel Report",
+            label="📥 Download Search Results (Excel)",
             data=buffer.getvalue(),
-            file_name="Tyco_Summarized_Report.xlsx",
+            file_name="Tyco_Search_Results.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 else:
-    st.info("No data found. Please use the sidebar to upload files.")
+    st.warning("System is ready. Please upload a file from the sidebar to begin.")
