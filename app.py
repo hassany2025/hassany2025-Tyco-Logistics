@@ -19,6 +19,13 @@ from datetime import datetime
 
 # ================= CONFIG =================
 st.set_page_config(page_title="Tyco Logistics Engine", layout="wide")
+# ================= SECURITY =================
+APP_PASSWORD = "tyco2026"
+
+pwd = st.text_input("Access Password", type="password")
+
+if pwd != APP_PASSWORD:
+    st.stop()
 
 BASE_DIR = os.path.dirname(__file__)
 MASTER_DB = os.path.join(BASE_DIR, "tyco_data.csv")
