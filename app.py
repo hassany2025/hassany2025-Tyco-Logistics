@@ -1,126 +1,159 @@
+"""
+Tyco Logistics Engine
+---------------------
+Developed by: Eng-Ahmed Hassany
+Classification: Internal Use Only
+
+Rules:
+- Storage is based ONLY on sheet named 'Data'
+- Duplicate rows inside the same sheet are SUMMED
+- Duplicate shipments across days are UPDATED (not duplicated)
+"""
+
 import streamlit as st
 import pandas as pd
 import os
 import io
+from datetime import datetime
 
-# 1. App Configuration
-st.set_page_config(page_title="Tyco Logistics System", layout="wide")
+# ================= CONFIG =================
+st.set_page_config(page_title="Tyco Logistics Engine", layout="wide")
 
-# Constants for your environment
-MASTER_DB = "Tyco_Master_Database.csv"
-SEP = ";"  # Matches your Excel (Semicolon separator) settings
+MASTER_DB = "tyco_data.csv"
+SEP = ";"
 
-def load_master_data():
-    """Loads and cleans the master database."""
+KEY_COLS = ['ShipmntNbr', 'Tracking No', 'Dely No', 'Cust Material Nbr']
+QTY_COL = 'Dely Qty'
+
+# ================= FUNCTIONS =================
+def load_db():
     if os.path.exists(MASTER_DB):
-        try:
-            df = pd.read_csv(MASTER_DB, sep=SEP, encoding='utf-8-sig')
-            df.columns = df.columns.str.strip()
-            if 'PGI Date' in df.columns:
-                df['PGI Date'] = pd.to_datetime(df['PGI Date'], dayfirst=True, errors='coerce')
-            return df
-        except Exception as e:
-            st.error(f"Error reading Database: {e}")
-            return pd.DataFrame()
+        df = pd.read_csv(MASTER_DB, sep=SEP, encoding="utf-8-sig")
+        df.columns = df.columns.str.strip()
+        return df
     return pd.DataFrame()
 
-# --- SIDEBAR: Data Management ---
+def save_db(df):
+    df.to_csv(MASTER_DB, index=False, sep=SEP, encoding="utf-8-sig")
+
+def clean_df(df):
+    df.columns = df.columns.str.strip()
+    if QTY_COL in df.columns:
+        df[QTY_COL] = pd.to_numeric(df[QTY_COL], errors="coerce").fillna(0)
+    return df
+
+# ================= SIDEBAR =================
 with st.sidebar:
-    st.header("📦 Data Management")
-    
-    current_db = load_master_data()
-    if not current_db.empty:
-        st.metric("Total History Records", len(current_db))
-        
-        # Backup Logic
-        buffer_all = io.BytesIO()
-        with pd.ExcelWriter(buffer_all, engine='xlsxwriter') as writer:
-            current_db.to_excel(writer, index=False, sheet_name='Full_History')
-        st.download_button("📥 Download Full History", buffer_all.getvalue(), "Full_Tyco_History.xlsx")
+    st.header("Data Management")
+
+    db = load_db()
+    st.metric("Total History Records", len(db))
+
+    if not db.empty:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+            db.to_excel(writer, index=False, sheet_name="Data")
+        st.download_button(
+            "Download Full History (Data)",
+            buffer.getvalue(),
+            "Tyco_Full_Data.xlsx"
+        )
 
     st.divider()
-    
-    uploaded_file = st.file_uploader("Upload Daily Sheet (Excel)", type=['xlsx'])
-    if uploaded_file:
-        if st.button("🚀 Process & Store Data"):
-            new_data = pd.read_excel(uploaded_file)
-            new_data.columns = new_data.columns.str.strip()
-            
-            # Combine current database with new upload
-            combined_df = pd.concat([current_db, new_data], ignore_index=True)
-            
-            # Smart Deduplication: Keep the latest update
-            keys = ['ShipmntNbr', 'Dely No', 'Cust Material Nbr']
-            existing_keys = [c for c in keys if c in combined_df.columns]
-            combined_df.drop_duplicates(subset=existing_keys, keep='last', inplace=True)
-            
-            combined_df.to_csv(MASTER_DB, index=False, sep=SEP, encoding='utf-8-sig')
-            st.success("Database Updated Successfully!")
+
+    uploaded_file = st.file_uploader(
+        "Upload Daily Sheet (Excel)",
+        type=["xlsx"]
+    )
+
+    if uploaded_file and st.button("Store Data Sheet"):
+        try:
+            # Read Data sheet only
+            new_df = pd.read_excel(uploaded_file, sheet_name="Data")
+            new_df = clean_df(new_df)
+
+            # Aggregate inside the same sheet
+            valid_keys = [c for c in KEY_COLS if c in new_df.columns]
+            new_df = new_df.groupby(valid_keys, as_index=False)[QTY_COL].sum()
+
+            # Add load timestamp
+            new_df["Load_Date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            # Merge with database (update logic)
+            combined = pd.concat([db, new_df], ignore_index=True)
+            combined = combined.drop_duplicates(
+                subset=valid_keys,
+                keep="last"
+            )
+
+            save_db(combined)
+            st.success("Data stored successfully.")
             st.rerun()
 
+        except Exception as e:
+            st.error(f"Upload failed: {e}")
+
     if st.checkbox("Advanced: Clear Database"):
-        if st.button("⚠️ Wipe All Data"):
+        if st.button("Wipe All Data"):
             if os.path.exists(MASTER_DB):
                 os.remove(MASTER_DB)
-                st.warning("All records deleted.")
+                st.warning("Database cleared.")
                 st.rerun()
 
-# --- MAIN INTERFACE: Search & The Quantities Rule ---
-st.title("Tyco Logistics Engine 🚀")
-raw_df = load_master_data()
+# ================= MAIN =================
+st.title("Tyco Logistics Engine")
+st.caption("Developed by Eng-Ahmed Hassany")
 
-if not raw_df.empty:
-    st.subheader("🔍 Search & Summarized Report")
-    
-    # Search Filters
-    c1, c2, c3, c4 = st.columns(4)
-    ship_in = c1.text_input("Shipment No")
-    track_in = c2.text_input("Tracking No")
-    mat_in = c3.text_input("Material Nbr")
-    dely_in = c4.text_input("Delivery No") # السطر اللي كان فيه المشكلة اتصلح هنا
+db = load_db()
 
-    # Filtering Logic
-    filtered_df = raw_df.copy()
-    filter_map = {
-        'ShipmntNbr': ship_in,
-        'Tracking No': track_in,
-        'Cust Material Nbr': mat_in,
-        'Dely No': dely_in
-    }
+if db.empty:
+    st.info("Database is empty. Upload a daily sheet (Data sheet only).")
+    st.stop()
 
-    for col, val in filter_map.items():
-        if val and col in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df[col].astype(str).str.contains(val, na=False, case=False)]
+st.subheader("Search & Results")
 
-    # --- 2. APPLY THE SUMMARIZATION RULE ---
-    group_cols = ['ShipmntNbr', 'Tracking No', 'Cust Material Nbr', 'Dely No']
-    valid_group_cols = [c for c in group_cols if c in filtered_df.columns]
-    
-    if not filtered_df.empty and valid_group_cols:
-        if 'Dely Qty' in filtered_df.columns:
-            filtered_df['Dely Qty'] = pd.to_numeric(filtered_df['Dely Qty'], errors='coerce').fillna(0)
-            
-            agg_rules = {'Dely Qty': 'sum'}
-            if 'Shipto City' in filtered_df.columns: agg_rules['Shipto City'] = 'first'
-            if 'PGI Date' in filtered_df.columns: agg_rules['PGI Date'] = 'max'
-            
-            summary_df = filtered_df.groupby(valid_group_cols, as_index=False).agg(agg_rules)
-            summary_df = summary_df[summary_df['Dely Qty'] > 0] # استبعاد الكميات الصفرية
-            
-            st.write(f"### Results Found: {len(summary_df)}")
-            display_df = summary_df.copy()
-            if 'PGI Date' in display_df.columns:
-                display_df['PGI Date'] = display_df['PGI Date'].dt.strftime('%d/%m/%Y')
-            
-            st.dataframe(display_df, use_container_width=True)
+c1, c2, c3, c4 = st.columns(4)
+ship = c1.text_input("Shipment No")
+track = c2.text_input("Tracking No")
+mat = c3.text_input("Material Nbr")
+dely = c4.text_input("Delivery No")
 
-            # Export Logic
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                summary_df.to_excel(writer, index=False, sheet_name='Summarized_Report')
-            
-            st.download_button("📥 Download Summarized Excel", buffer.getvalue(), "Tyco_Summary.xlsx")
-        else:
-            st.error("Column 'Dely Qty' not found.")
+filtered = db.copy()
+
+filters = {
+    "ShipmntNbr": ship,
+    "Tracking No": track,
+    "Cust Material Nbr": mat,
+    "Dely No": dely
+}
+
+for col, val in filters.items():
+    if val and col in filtered.columns:
+        filtered = filtered[
+            filtered[col].astype(str).str.contains(val, case=False, na=False)
+        ]
+
+# Summary for display only
+group_cols = [c for c in KEY_COLS if c in filtered.columns]
+
+if not filtered.empty and group_cols:
+    summary = (
+        filtered
+        .groupby(group_cols, as_index=False)[QTY_COL]
+        .sum()
+    )
+
+    st.write(f"Results Found: {len(summary)}")
+    st.dataframe(summary, use_container_width=True)
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        summary.to_excel(writer, index=False, sheet_name="Summary")
+
+    st.download_button(
+        "Download Search Result",
+        buffer.getvalue(),
+        "Tyco_Search_Result.xlsx"
+    )
 else:
-    st.info("The database is currently empty. Please upload a file from the sidebar.")
+    st.info("No results found.")
