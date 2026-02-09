@@ -2,12 +2,13 @@
 Tyco Logistics Engine
 ---------------------
 Developed by: Eng-Ahmed Hassany
-Classification: Internal Use Only
+Internal Use Only
 
 Rules:
-- Storage is based ONLY on sheet named 'Data'
+- Read & store data from sheet named 'Data' only
 - Duplicate rows inside the same sheet are SUMMED
 - Duplicate shipments across days are UPDATED (not duplicated)
+- Paste multiple Tracking Numbers for search (Copy / Paste)
 """
 
 import streamlit as st
@@ -19,7 +20,8 @@ from datetime import datetime
 # ================= CONFIG =================
 st.set_page_config(page_title="Tyco Logistics Engine", layout="wide")
 
-MASTER_DB = "tyco_data.csv"
+BASE_DIR = os.path.dirname(__file__)
+MASTER_DB = os.path.join(BASE_DIR, "tyco_data.csv")
 SEP = ";"
 
 KEY_COLS = ['ShipmntNbr', 'Tracking No', 'Dely No', 'Cust Material Nbr']
@@ -66,20 +68,20 @@ with st.sidebar:
         type=["xlsx"]
     )
 
-    if uploaded_file and st.button("Store Data Sheet"):
+    if uploaded_file and st.button("Store Data"):
         try:
             # Read Data sheet only
             new_df = pd.read_excel(uploaded_file, sheet_name="Data")
             new_df = clean_df(new_df)
 
-            # Aggregate inside the same sheet
+            # Aggregate duplicates inside same sheet
             valid_keys = [c for c in KEY_COLS if c in new_df.columns]
             new_df = new_df.groupby(valid_keys, as_index=False)[QTY_COL].sum()
 
             # Add load timestamp
             new_df["Load_Date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # Merge with database (update logic)
+            # Merge with existing DB (UPDATE logic)
             combined = pd.concat([db, new_df], ignore_index=True)
             combined = combined.drop_duplicates(
                 subset=valid_keys,
@@ -93,13 +95,6 @@ with st.sidebar:
         except Exception as e:
             st.error(f"Upload failed: {e}")
 
-    if st.checkbox("Advanced: Clear Database"):
-        if st.button("Wipe All Data"):
-            if os.path.exists(MASTER_DB):
-                os.remove(MASTER_DB)
-                st.warning("Database cleared.")
-                st.rerun()
-
 # ================= MAIN =================
 st.title("Tyco Logistics Engine")
 st.caption("Developed by Eng-Ahmed Hassany")
@@ -112,28 +107,37 @@ if db.empty:
 
 st.subheader("Search & Results")
 
-c1, c2, c3, c4 = st.columns(4)
+# --- Filters ---
+c1, c2, c3 = st.columns(3)
 ship = c1.text_input("Shipment No")
-track = c2.text_input("Tracking No")
+dely = c2.text_input("Delivery No")
 mat = c3.text_input("Material Nbr")
-dely = c4.text_input("Delivery No")
+
+# --- Paste Tracking Numbers ---
+track_list = st.text_area(
+    "Paste Tracking Numbers (one per line)",
+    height=130,
+    placeholder="Paste tracking numbers here"
+)
 
 filtered = db.copy()
 
-filters = {
-    "ShipmntNbr": ship,
-    "Tracking No": track,
-    "Cust Material Nbr": mat,
-    "Dely No": dely
-}
+# Single filters
+if ship and 'ShipmntNbr' in filtered.columns:
+    filtered = filtered[filtered['ShipmntNbr'].astype(str).str.contains(ship, case=False, na=False)]
 
-for col, val in filters.items():
-    if val and col in filtered.columns:
-        filtered = filtered[
-            filtered[col].astype(str).str.contains(val, case=False, na=False)
-        ]
+if dely and 'Dely No' in filtered.columns:
+    filtered = filtered[filtered['Dely No'].astype(str).str.contains(dely, case=False, na=False)]
 
-# Summary for display only
+if mat and 'Cust Material Nbr' in filtered.columns:
+    filtered = filtered[filtered['Cust Material Nbr'].astype(str).str.contains(mat, case=False, na=False)]
+
+# Multiple tracking numbers (Paste)
+if track_list and 'Tracking No' in filtered.columns:
+    tracks = [t.strip() for t in track_list.splitlines() if t.strip()]
+    filtered = filtered[filtered['Tracking No'].astype(str).isin(tracks)]
+
+# --- Summary for display ---
 group_cols = [c for c in KEY_COLS if c in filtered.columns]
 
 if not filtered.empty and group_cols:
@@ -151,7 +155,7 @@ if not filtered.empty and group_cols:
         summary.to_excel(writer, index=False, sheet_name="Summary")
 
     st.download_button(
-        "Download Search Result",
+        "Download Result",
         buffer.getvalue(),
         "Tyco_Search_Result.xlsx"
     )
