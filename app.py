@@ -8,7 +8,7 @@ Rules:
 - Read & store data from sheet named 'Data' only
 - Duplicate rows inside the same sheet are SUMMED
 - Duplicate shipments across days are UPDATED (not duplicated)
-- Paste multiple Tracking Numbers for search (Copy / Paste)
+- All searches are AUTO (no search buttons)
 """
 
 import streamlit as st
@@ -68,7 +68,7 @@ with st.sidebar:
         type=["xlsx"]
     )
 
-    if uploaded_file and st.button("Store Data"):
+    if uploaded_file:
         try:
             # Read Data sheet only
             new_df = pd.read_excel(uploaded_file, sheet_name="Data")
@@ -81,7 +81,7 @@ with st.sidebar:
             # Add load timestamp
             new_df["Load_Date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # Merge with existing DB (UPDATE logic)
+            # Merge with DB (UPDATE logic)
             combined = pd.concat([db, new_df], ignore_index=True)
             combined = combined.drop_duplicates(
                 subset=valid_keys,
@@ -105,15 +105,14 @@ if db.empty:
     st.info("Database is empty. Upload a daily sheet (Data sheet only).")
     st.stop()
 
-st.subheader("Search & Results")
+st.subheader("Auto Search & Results")
 
-# --- Filters ---
+# ----------- FILTERS (AUTO) -----------
 c1, c2, c3 = st.columns(3)
 ship = c1.text_input("Shipment No")
 dely = c2.text_input("Delivery No")
 mat = c3.text_input("Material Nbr")
 
-# --- Paste Tracking Numbers ---
 track_list = st.text_area(
     "Paste Tracking Numbers (one per line)",
     height=130,
@@ -122,22 +121,33 @@ track_list = st.text_area(
 
 filtered = db.copy()
 
-# Single filters
+# Shipment filter
 if ship and 'ShipmntNbr' in filtered.columns:
-    filtered = filtered[filtered['ShipmntNbr'].astype(str).str.contains(ship, case=False, na=False)]
+    filtered = filtered[
+        filtered['ShipmntNbr'].astype(str).str.contains(ship, case=False, na=False)
+    ]
 
+# Delivery filter
 if dely and 'Dely No' in filtered.columns:
-    filtered = filtered[filtered['Dely No'].astype(str).str.contains(dely, case=False, na=False)]
+    filtered = filtered[
+        filtered['Dely No'].astype(str).str.contains(dely, case=False, na=False)
+    ]
 
+# Material filter
 if mat and 'Cust Material Nbr' in filtered.columns:
-    filtered = filtered[filtered['Cust Material Nbr'].astype(str).str.contains(mat, case=False, na=False)]
+    filtered = filtered[
+        filtered['Cust Material Nbr'].astype(str).str.contains(mat, case=False, na=False)
+    ]
 
-# Multiple tracking numbers (Paste)
+# Multiple Tracking Numbers (Paste)
 if track_list and 'Tracking No' in filtered.columns:
     tracks = [t.strip() for t in track_list.splitlines() if t.strip()]
-    filtered = filtered[filtered['Tracking No'].astype(str).isin(tracks)]
+    if tracks:
+        filtered = filtered[
+            filtered['Tracking No'].astype(str).isin(tracks)
+        ]
 
-# --- Summary for display ---
+# ----------- SUMMARY (DISPLAY ONLY) -----------
 group_cols = [c for c in KEY_COLS if c in filtered.columns]
 
 if not filtered.empty and group_cols:
