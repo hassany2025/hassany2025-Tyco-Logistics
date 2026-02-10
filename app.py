@@ -9,6 +9,7 @@ Rules:
 - Duplicate rows inside the same sheet are SUMMED
 - Duplicate shipments across days are UPDATED (not duplicated)
 - All searches are AUTO (no search buttons)
+- Access controlled by password (session based)
 """
 
 import streamlit as st
@@ -16,19 +17,30 @@ import pandas as pd
 import os
 import io
 from datetime import datetime
+from pathlib import Path
 
 # ================= CONFIG =================
 st.set_page_config(page_title="Tyco Logistics Engine", layout="wide")
+
 # ================= SECURITY =================
 APP_PASSWORD = "tyco2026"
 
-pwd = st.text_input("Access Password", type="password")
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
 
-if pwd != APP_PASSWORD:
-    st.stop()
+if not st.session_state.authenticated:
+    pwd = st.text_input("Access Password", type="password")
+    if pwd == APP_PASSWORD:
+        st.session_state.authenticated = True
+        st.rerun()
+    else:
+        st.stop()
 
-BASE_DIR = os.path.dirname(__file__)
-MASTER_DB = os.path.join(BASE_DIR, "tyco_data.csv")
+# ================= DATABASE PATH (FIXED) =================
+DATA_DIR = Path.home() / "TycoEngine"
+DATA_DIR.mkdir(exist_ok=True)
+
+MASTER_DB = DATA_DIR / "tyco_data.csv"
 SEP = ";"
 
 KEY_COLS = ['ShipmntNbr', 'Tracking No', 'Dely No', 'Cust Material Nbr']
@@ -36,7 +48,7 @@ QTY_COL = 'Dely Qty'
 
 # ================= FUNCTIONS =================
 def load_db():
-    if os.path.exists(MASTER_DB):
+    if MASTER_DB.exists():
         df = pd.read_csv(MASTER_DB, sep=SEP, encoding="utf-8-sig")
         df.columns = df.columns.str.strip()
         return df
@@ -128,25 +140,21 @@ track_list = st.text_area(
 
 filtered = db.copy()
 
-# Shipment filter
 if ship and 'ShipmntNbr' in filtered.columns:
     filtered = filtered[
         filtered['ShipmntNbr'].astype(str).str.contains(ship, case=False, na=False)
     ]
 
-# Delivery filter
 if dely and 'Dely No' in filtered.columns:
     filtered = filtered[
         filtered['Dely No'].astype(str).str.contains(dely, case=False, na=False)
     ]
 
-# Material filter
 if mat and 'Cust Material Nbr' in filtered.columns:
     filtered = filtered[
         filtered['Cust Material Nbr'].astype(str).str.contains(mat, case=False, na=False)
     ]
 
-# Multiple Tracking Numbers (Paste)
 if track_list and 'Tracking No' in filtered.columns:
     tracks = [t.strip() for t in track_list.splitlines() if t.strip()]
     if tracks:
