@@ -3,18 +3,10 @@ Tyco Logistics Engine
 ---------------------
 Developed by: Eng-Ahmed Hassany
 Internal Use Only
-
-Rules:
-- Read & store data from sheet named 'Data' only
-- Duplicate rows inside the same sheet are SUMMED
-- Duplicate shipments across days are UPDATED (not duplicated)
-- All searches are AUTO (no search buttons)
-- Access controlled by password (session based)
 """
 
 import streamlit as st
 import pandas as pd
-import os
 import io
 from datetime import datetime
 from pathlib import Path
@@ -36,7 +28,7 @@ if not st.session_state.authenticated:
     else:
         st.stop()
 
-# ================= DATABASE PATH (FIXED) =================
+# ================= DATABASE PATH =================
 DATA_DIR = Path.home() / "TycoEngine"
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -59,8 +51,7 @@ def save_db(df):
 
 def clean_df(df):
     df.columns = df.columns.str.strip()
-    if QTY_COL in df.columns:
-        df[QTY_COL] = pd.to_numeric(df[QTY_COL], errors="coerce").fillna(0)
+    df[QTY_COL] = pd.to_numeric(df.get(QTY_COL, 0), errors="coerce").fillna(0)
     return df
 
 # ================= SIDEBAR =================
@@ -84,35 +75,47 @@ with st.sidebar:
 
     uploaded_file = st.file_uploader(
         "Upload Daily Sheet (Excel)",
-        type=["xlsx"]
+        type=["xlsx"],
+        key="upload_file"
     )
 
     if uploaded_file:
-        try:
-            # Read Data sheet only
-            new_df = pd.read_excel(uploaded_file, sheet_name="Data")
-            new_df = clean_df(new_df)
+        st.warning("Do you want to add this sheet to storage?")
 
-            # Aggregate duplicates inside same sheet
-            valid_keys = [c for c in KEY_COLS if c in new_df.columns]
-            new_df = new_df.groupby(valid_keys, as_index=False)[QTY_COL].sum()
+        col1, col2 = st.columns(2)
+        confirm = col1.button("Yes, add to storage")
+        cancel = col2.button("No, cancel")
 
-            # Add load timestamp
-            new_df["Load_Date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if confirm:
+            try:
+                new_df = pd.read_excel(uploaded_file, sheet_name="Data")
+                new_df = clean_df(new_df)
 
-            # Merge with DB (UPDATE logic)
-            combined = pd.concat([db, new_df], ignore_index=True)
-            combined = combined.drop_duplicates(
-                subset=valid_keys,
-                keep="last"
-            )
+                valid_keys = [c for c in KEY_COLS if c in new_df.columns]
+                new_df = new_df.groupby(valid_keys, as_index=False)[QTY_COL].sum()
 
-            save_db(combined)
-            st.success("Data stored successfully.")
+                new_df["Load_Date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                combined = pd.concat([db, new_df], ignore_index=True)
+                combined = combined.drop_duplicates(
+                    subset=valid_keys,
+                    keep="last"
+                )
+
+                save_db(combined)
+
+                st.success("Sheet added to storage successfully.")
+
+                st.session_state.upload_file = None
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Upload failed: {e}")
+
+        if cancel:
+            st.info("Upload cancelled. Nothing was stored.")
+            st.session_state.upload_file = None
             st.rerun()
-
-        except Exception as e:
-            st.error(f"Upload failed: {e}")
 
 # ================= MAIN =================
 st.title("Tyco Logistics Engine")
@@ -140,49 +143,35 @@ track_list = st.text_area(
 
 filtered = db.copy()
 
-if ship and 'ShipmntNbr' in filtered.columns:
-    filtered = filtered[
-        filtered['ShipmntNbr'].astype(str).str.contains(ship, case=False, na=False)
-    ]
+if ship:
+    filtered = filtered[filtered['ShipmntNbr'].astype(str).str.contains(ship, case=False, na=False)]
 
-if dely and 'Dely No' in filtered.columns:
-    filtered = filtered[
-        filtered['Dely No'].astype(str).str.contains(dely, case=False, na=False)
-    ]
+if dely:
+    filtered = filtered[filtered['Dely No'].astype(str).str.contains(dely, case=False, na=False)]
 
-if mat and 'Cust Material Nbr' in filtered.columns:
-    filtered = filtered[
-        filtered['Cust Material Nbr'].astype(str).str.contains(mat, case=False, na=False)
-    ]
+if mat:
+    filtered = filtered[filtered['Cust Material Nbr'].astype(str).str.contains(mat, case=False, na=False)]
 
-if track_list and 'Tracking No' in filtered.columns:
+if track_list:
     tracks = [t.strip() for t in track_list.splitlines() if t.strip()]
-    if tracks:
-        filtered = filtered[
-            filtered['Tracking No'].astype(str).isin(tracks)
-        ]
+    filtered = filtered[filtered['Tracking No'].astype(str).isin(tracks)]
 
-# ----------- SUMMARY (DISPLAY ONLY) -----------
-group_cols = [c for c in KEY_COLS if c in filtered.columns]
+# ----------- SUMMARY -----------
+summary = (
+    filtered
+    .groupby(KEY_COLS, as_index=False)[QTY_COL]
+    .sum()
+)
 
-if not filtered.empty and group_cols:
-    summary = (
-        filtered
-        .groupby(group_cols, as_index=False)[QTY_COL]
-        .sum()
-    )
+st.write(f"Results Found: {len(summary)}")
+st.dataframe(summary, use_container_width=True)
 
-    st.write(f"Results Found: {len(summary)}")
-    st.dataframe(summary, use_container_width=True)
+buffer = io.BytesIO()
+with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+    summary.to_excel(writer, index=False, sheet_name="Summary")
 
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        summary.to_excel(writer, index=False, sheet_name="Summary")
-
-    st.download_button(
-        "Download Result",
-        buffer.getvalue(),
-        "Tyco_Search_Result.xlsx"
-    )
-else:
-    st.info("No results found.")
+st.download_button(
+    "Download Result",
+    buffer.getvalue(),
+    "Tyco_Search_Result.xlsx"
+)
